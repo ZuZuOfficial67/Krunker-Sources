@@ -1,0 +1,43 @@
+# Server Script runs only on Hosted server & not in test mode
+# KrunkScript Copyright (C) Yendis Entertainment Pty Ltd
+#
+# Add custom actions here
+str[] nukingPlayers = str[];
+bool check = false;
+
+bool action isPlayerNuking(obj player) {
+	for(num i = 0; i < lengthOf nukingPlayers; i++) {
+		if(toStr player.username == nukingPlayers[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+public action onCustomTrigger(str playerID, str customParam, num value) {
+	
+	obj player = GAME.PLAYERS.findByID(playerID);
+
+	if (customParam == "sendRevNukeMessage") {
+		GAME.CHAT.broadcast(toStr(player.username) + " Tried to ruin the game and REVNUKED LOSER!", "#ff0000");
+		GAME.CHAT.broadcast("Credits to get_die_lol", "#00ff44");
+	}
+
+	if (customParam == "addToPlayerNuking") {
+		addTo nukingPlayers toStr(player.username);
+	}
+
+	if (customParam == "removeFromPlayerNuking") {
+		nukingPlayers = str[];
+	}
+}
+
+public bool action shouldTrigger(str playerID, str triggerID, str customParam) {
+	
+	obj player = GAME.PLAYERS.findByID(playerID);
+	
+	if (customParam == "isPlayerNuking") {
+		return isPlayerNuking(player);
+	}
+    return true;
+}
