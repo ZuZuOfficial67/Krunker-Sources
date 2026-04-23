@@ -1,0 +1,23 @@
+# Server Script runs only on Hosted server & not in test mode
+# KrunkScript Copyright (C) Yendis Entertainment Pty Ltd
+#
+# Add custom actions here
+str[] kickList = str[""];
+bool check = false;
+
+bool action isPlayerKicked(obj player) {
+	for(num i = 0; i < lengthOf kickList; i++) {
+		if(toStr player.username == kickList[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+public action onPlayerSpawn(str id) {
+	obj player = GAME.PLAYERS.findByID(id);
+	
+	if(isPlayerKicked(player)) {
+		GAME.ADMIN.kick(id);
+	}
+}
