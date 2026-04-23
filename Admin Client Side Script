@@ -1,0 +1,166 @@
+# Client Script runs only on the client
+# KrunkScript Copyright (C) Yendis Entertainment Pty Ltd
+# 
+# Add custom actions here
+bool usingMenu = false;
+num playerSelected = 0;
+num commandSelected = 0;
+num playerShifted = 0;
+str[] admins = str["notZuZu", "get_die_lol", "charizard99", "krunk_twerk", "munraito2007", "notJustKaZu","ayan_24az"];
+bool check = false;
+
+public action render(num delta) {
+    if(usingMenu){
+        # Panel shadow
+        GAME.OVERLAY.drawRect(302, 92, 1100, 560, 0, "#000", 0.4);
+        # Panel background
+        GAME.OVERLAY.drawRect(300, 90, 1100, 560, 0, "#1a1a2e", 1);
+        # Panel inner
+        GAME.OVERLAY.drawRect(310, 100, 1080, 540, 0, "#16213e", 1);
+        # Title bar
+        GAME.OVERLAY.drawRect(310, 100, 1080, 40, 0, "#0f3460", 1);
+        GAME.OVERLAY.drawText("Admin Command Panel", 850, 110, 0, 20, "center", "#0af", 1);
+        GAME.OVERLAY.drawText("by notJustKaZu", 850, 130, 0, 20, "center", "#0af", 1);
+
+
+        # Column headers (anchored right, -PTS at right edge)
+        GAME.OVERLAY.drawText("Player", 320, 155, 0, 12, "left", "#aaa", 1);
+        GAME.OVERLAY.drawText("REV",  830, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("TPT",   878, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("TPM",   926, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("TPAD",  974, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("FRZ",  1022, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("UFZ",  1070, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("KILL", 1118, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("GOD",  1166, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("KICK", 1214, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("BAN",  1262, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("+PTS", 1310, 155, 0, 11, "center", "#ccc", 1);
+        GAME.OVERLAY.drawText("-PTS", 1358, 155, 0, 11, "center", "#ccc", 1);
+
+        # Divider line
+        GAME.OVERLAY.drawRect(315, 160, 1070, 2, 0, "#0f3460", 1);
+
+        obj[] players = GAME.PLAYERS.list();
+
+        for (num i = 0; i < ((lengthOf players) - playerShifted) && i < 14; i++) {
+            num rowY = 165 + (35 * i);
+            num playerIdx = i + playerShifted;
+
+            # Row background (alternating)
+            if((i % 2) == 0){
+                GAME.OVERLAY.drawRect(315, rowY, 1070, 30, 0, "#0d1b2a", 1);
+            } else {
+                GAME.OVERLAY.drawRect(315, rowY, 1070, 30, 0, "#112240", 1);
+            }
+
+            # Selected player highlight
+            if(playerIdx == playerSelected){
+                GAME.OVERLAY.drawRect(315, rowY, 1070, 30, 0, "#0f3460", 0.6);
+            }
+
+            # Player name
+            GAME.OVERLAY.drawText(players[playerIdx].username, 320, rowY + 18, 0, 13, "left", "#e0e0e0", 1);
+
+            # 11 buttons anchored to right edge, step=48, btnW=44
+            # btn11 (-PTS) center=1358, btn0 (REV) center=830
+            num btnStep = 48;
+            num btnW = 44;
+            num btnH = 22;
+            num btnY = rowY + 4;
+
+            str[] btnLabels = str["REV","TPT", "TPM", "TPAD", "FRZ", "UFZ", "KILL", "GOD", "KICK", "BAN", "+PTS", "-PTS"];
+            str[] btnColors = str["#3f1f4a","#7b2fff", "#1a6aff", "#0088ff", "#00cccc", "#00ffaa", "#00cc44", "#ff8800", "#ffcc00", "#ff2244", "#00aaff", "#ff4466"];
+
+            for(num b = 0; b < 12; b++){
+                num btnCX = 830 + (btnStep * b);
+                num btnLX = btnCX - (btnW / 2);
+
+                # Highlight selected command on selected player row
+                if(playerIdx == playerSelected && b == commandSelected){
+                    GAME.OVERLAY.drawRect(btnLX - 2, btnY - 2, btnW + 4, btnH + 4, 0, "#fff", 1);
+                }
+
+                GAME.OVERLAY.drawRect(btnLX, btnY, btnW, btnH, 0, btnColors[b], 1);
+                GAME.OVERLAY.drawText(btnLabels[b], btnCX, btnY + 13, 0, 10, "center", "#fff", 1);
+            }
+        }
+
+        # Controls hint
+        GAME.OVERLAY.drawText("8/2: select player  |  4/6: select command  |  5: execute  |  0: close", 850, 625, 0, 11, "center", "#555", 1);
+    }
+}
+
+public action onKeyPress(str key, num code) {
+    obj player = GAME.PLAYERS.getSelf();
+
+    if(key == "0"){
+        check = false;
+        playerSelected = 0;
+        commandSelected = 0;
+        playerShifted = 0;
+
+        for(num i = 0; i < lengthOf admins; i++){
+            if(toStr player.username == admins[i]){
+                check = true;
+            }
+        }
+        if(check == true){
+            if(usingMenu == true){
+                usingMenu = false;
+            } else {
+                usingMenu = true;
+            }
+        }
+    }
+
+    if(usingMenu == true){
+        obj[] players = GAME.PLAYERS.list();
+
+        # Move command selection right
+        if(key == "6"){
+            if(commandSelected < 11){
+                commandSelected++;
+            } else {
+                commandSelected = 0;
+            }
+        }
+
+        # Move command selection left
+        if(key == "4"){
+            if(commandSelected > 0){
+                commandSelected--;
+            } else {
+                commandSelected = 11;
+            }
+        }
+
+        # Move player selection up
+        if(key == "8"){
+            if(playerSelected > 0){
+                playerSelected--;
+            }
+            if(playerShifted > playerSelected){
+                playerShifted--;
+            }
+        }
+
+        # Move player selection down
+        if(key == "2"){
+            if(playerSelected < (lengthOf players) - 1){
+                playerSelected++;
+            }
+            if(playerShifted <= playerSelected - 14){
+                playerShifted++;
+            }
+        }
+
+        # Execute command
+        if(key == "5"){
+            GAME.NETWORK.send(
+                toStr commandSelected,
+                { playerSelected: players[playerSelected].id }
+            );
+        }
+    }
+}
