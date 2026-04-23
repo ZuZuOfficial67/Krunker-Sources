@@ -1,0 +1,102 @@
+# Server Script runs only on Hosted server & not in test mode
+# KrunkScript Copyright (C) Yendis Entertainment Pty Ltd
+#
+# Add custom actions here
+str[] admins = str[""];
+bool check = false;
+
+public action onNetworkMessage(str id, obj data, str playerID) {
+    obj sender = GAME.PLAYERS.findByID(playerID);
+ 
+    # Verify SENDER is an admin
+    check = false;
+    for(num i = 0; i < lengthOf admins; i++){
+        if(toStr sender.username == admins[i]){
+            check = true;
+        }
+    }
+ 
+    if(check == true){
+        obj p1 = GAME.PLAYERS.findByID(playerID);
+        obj p2 = GAME.PLAYERS.findByID(data.playerSelected);
+ 
+		# id "0" = REV (Revive/Switch TEam)
+		if (id == "0") {
+			obj targetPlayer = GAME.PLAYERS.findByID((str)data.target);
+			addTo savedPositions {
+				playerID: data.target,
+				x: targetPlayer.position.x,
+				y: targetPlayer.position.y,
+				z: targetPlayer.position.z,
+			};
+		}
+ 
+        # id "1" = TPT (Teleport sender to target)
+        if(id == "1") {
+            p1.position.x = p2.position.x;
+            p1.position.y = p2.position.y;
+            p1.position.z = p2.position.z;
+        }
+ 
+        # id "2" = TPM (Teleport target to sender)
+        if(id == "2"){
+            p2.position.x = p1.position.x;
+            p2.position.y = p1.position.y;
+            p2.position.z = p1.position.z;
+        }
+ 
+        # id "3" = TPAD (Teleport BOTH sender and target to admin room)
+        if(id == "3"){
+            p2.position.x = -467;
+            p2.position.y = 52;
+            p2.position.z = 6;
+        }
+ 
+        # id "4" = FRZ (Freeze)
+        if(id == "4"){
+            p2.defaultMovement = false;
+            GAME.CHAT.broadcast( " Admin freeze " + toStr(p2.username), "#FFFFFF");
+        }
+ 
+        # id "5" = UFZ (Unfreeze)
+        if(id == "5"){
+            p2.defaultMovement = true;
+            GAME.CHAT.broadcast( " Admin unfreeze " + toStr(p2.username), "#FFFFFF");
+        }
+ 
+        # id "6" = KILL
+        if(id == "6"){
+            (num) p2.health -= 500;
+            GAME.CHAT.broadcast( " Admin killed " + toStr(p2.username), "#FFFFFF");
+        }
+ 
+        # id "7" = GOD (give health)
+        if(id == "7"){
+            (num) p2.health += 500;
+        }
+ 
+        # id "8" = KICK
+        if(id == "8"){
+            GAME.CHAT.broadcast( " Admin kicked " + toStr(p2.username), "#FFFFFF");
+            GAME.ADMIN.kick(data.playerSelected);
+        }
+ 
+        # id "9" = BAN
+        if(id == "9"){
+            GAME.CHAT.broadcast("Admin  banned " + toStr(p2.username), "#FFFFFF");
+            GAME.ADMIN.ban(data.playerSelected);
+        }
+ 
+        # id "10" = +PTS
+        if(id == "10"){
+            (num) p2.score += 500;
+            GAME.CHAT.broadcast(" Admin gave score to " + toStr(p2.username), "#FFFFFF");
+        }
+ 
+        # id "11" = -PTS
+        if(id == "11"){
+            (num) p2.score -= 500;
+            GAME.CHAT.broadcast( "Admin removed score from " + toStr(p2.username), "#FFFFFF");
+        }
+    }
+}
