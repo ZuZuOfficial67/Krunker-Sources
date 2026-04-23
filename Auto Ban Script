@@ -1,0 +1,23 @@
+# Server Script runs only on Hosted server & not in test mode
+# KrunkScript Copyright (C) Yendis Entertainment Pty Ltd
+#
+# Add custom actions here
+str[] banList = str[""];
+bool check = false;
+
+bool action isPlayerBanned(obj player) {
+	for(num i = 0; i < lengthOf banList; i++) {
+		if(toStr player.username == banList[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+public action onPlayerSpawn(str id) {
+	obj player = GAME.PLAYERS.findByID(id);
+	
+	if(isPlayerBanned(player)) {
+		GAME.ADMIN.ban(id);
+	}
+}
