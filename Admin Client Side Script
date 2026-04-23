@@ -6,7 +6,7 @@ bool usingMenu = false;
 num playerSelected = 0;
 num commandSelected = 0;
 num playerShifted = 0;
-str[] admins = str["notZuZu", "get_die_lol", "charizard99", "krunk_twerk", "munraito2007", "notJustKaZu","ayan_24az"];
+str[] admins = str[""];
 bool check = false;
 
 public action render(num delta) {
