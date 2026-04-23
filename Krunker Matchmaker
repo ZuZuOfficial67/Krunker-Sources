@@ -1,0 +1,377 @@
+// ==UserScript==
+// @name         Lombre Matchmaker
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Krunker Matchmaker + Crosshair
+// @author       You
+// @match        *://krunker.io/*
+// @icon         https://krunker.io/img/favicon.png
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    // --- SETTINGS ---
+    const GIF_URL = "https://cdn.7tv.app/emote/01H8Z5H4XR0007KY8ZGB9M4DKJ/4x.gif";
+
+    const REG_LBL = {
+        "de-fra": "FRA", "us-ca": "SV", "au-syd": "SYD", "jp-tok": "TOK",
+        "sgp": "SIN", "us-nj": "NY", "in-bom": "MUM", "us-tx": "DAL",
+        "br-gru": "BR", "me-dub": "ME"
+    };
+
+    const MODES_MAP = {
+        0: "FFA", 1: "TDM", 2: "POINT", 3: "CTF", 14: "DEPO",
+        10: "KC", 8: "SHARP", 9: "DOM", 7: "TD",
+        12: "DEPO FFA", 13: "BH FFA", 15: "KR FFA"
+    };
+
+    const MAPS_MAP = {
+        "burg": "Burg", "littletown": "Littletown", "sandstorm": "Sandstorm", "subzero": "Subzero", "undergrowth": "Undergrowth",
+        "freight": "Freight", "lostworld": "Lostworld", "citadel": "Citadel", "oasis": "Oasis", "kanji": "Kanji",
+        "industry": "Industry", "lumber": "Lumber", "evacuation": "Evacuation", "site": "Site", "skytemple": "Skytemple",
+        "lagoon": "Lagoon", "tropicano": "Tropicano", "habitat": "Habitat", "atomic": "Atomic", "clockwork": "Clock",
+        "erupt": "Erupt", "hq": "HQ", "lush": "Lush", "vivo": "Vivo"
+    };
+
+    const RAIDS = {
+        "Soul Sanctum": "sanctum", "Khepri": "khepri", "Tortuga": "tortuga", "Laboratory": "laboratory"
+    };
+
+    const saved = JSON.parse(localStorage.getItem("lombre_match_settings") || "{}");
+    const STATE = {
+        tab: "match",
+        maps: saved.maps || Object.keys(MAPS_MAP),
+        modes: saved.modes || Object.keys(MODES_MAP).map(Number),
+        regions: saved.regions || Object.keys(REG_LBL),
+        minPlayers: saved.minPlayers ?? 0,
+        maxPlayers: saved.maxPlayers ?? 8,
+        minTime: saved.minTime ?? 1,
+        keybind: saved.keybind || null,
+        raidSort: saved.raidSort || "asc",
+        css: saved.css || "",
+        script: saved.script || "",
+        scriptError: false,
+        tradeData: null,
+        xhairEnabled: saved.xhairEnabled ?? false,
+        xhairShape: saved.xhairShape || "cross",
+        xhairSymbol: saved.xhairSymbol || "★",
+        xhairStretch: saved.xhairStretch ?? false,
+        xhairXScale: saved.xhairXScale ?? 1.0,
+        xhairYScale: saved.xhairYScale ?? 1.0,
+        xhairColor: saved.xhairColor || "#00ff00",
+        xhairOutline: saved.xhairOutline || "#000000",
+        xhairSize: saved.xhairSize ?? 10,
+        xhairThick: saved.xhairThick ?? 2,
+        xhairGap: saved.xhairGap ?? 5,
+        xhairDot: saved.xhairDot ?? 0,
+        xhairOutWidth: saved.xhairOutWidth ?? 1,
+        binding: false, visible: false, scrollPos: 0
+    };
+
+    function saveState() { localStorage.setItem("lombre_match_settings", JSON.stringify(STATE)); }
+
+    function showLoader() {
+        let overlay = document.getElementById("lombre_loader_overlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "lombre_loader_overlay";
+            overlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: rgba(0,0,0,0.85); z-index: 200000000;
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                pointer-events: all; font-family: 'GameFont', sans-serif;
+            `;
+            overlay.innerHTML = `
+                <img src="${GIF_URL}" style="width: 150px; height: 150px; margin-bottom: 20px;">
+                <div style="color: #fff; font-size: 24px; letter-spacing: 5px; font-weight: 900;">JOINING...</div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        overlay.style.display = "flex";
+    }
+
+    function applyCSS(css) {
+        let el = document.getElementById("lombre_custom_css");
+        if (!el) { el = document.createElement("style"); el.id = "lombre_custom_css"; document.head.appendChild(el); }
+        el.textContent = css;
+    }
+
+    function applyScript(code) {
+        if (!code) return;
+        try { new Function(code)(); STATE.scriptError = false; } catch (e) { STATE.scriptError = true; }
+    }
+
+    function toggleUI(force) {
+        STATE.visible = force !== undefined ? force : !STATE.visible;
+        ui.style.display = STATE.visible ? "block" : "none";
+        if (STATE.visible) {
+            if (STATE.tab === 'trade') fetchTradeInfo();
+            render();
+        }
+    }
+
+    async function fetchTradeInfo() {
+        try {
+            const res = await fetch("https://matchmaker.krunker.io/game-list?hostname=krunker.io");
+            const data = await res.json();
+            const plazas = data.games.filter(g => (g[4]?.i || "").toLowerCase().includes("plaza")).sort((a,b) => b[2] - a[2]);
+            if (plazas.length > 0) {
+                const [id, reg, ply, max] = plazas[0];
+                STATE.tradeData = `${(REG_LBL[reg] || reg).toUpperCase()} - ${ply}/${max} PLAYERS`;
+            } else { STATE.tradeData = "NO PLAZAS FOUND"; }
+            if (STATE.visible && STATE.tab === 'trade') render();
+        } catch (e) { STATE.tradeData = "ERROR FETCHING INFO"; if (STATE.visible) render(); }
+    }
+
+    function drawXhair(ctx, cx, cy, s) {
+        ctx.save(); ctx.translate(cx, cy);
+        if (s.xhairStretch) ctx.scale(s.xhairXScale, s.xhairYScale);
+        ctx.lineCap = "butt";
+        const drawRect = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+        if (s.xhairOutWidth > 0) {
+            if (s.xhairDot > 0) drawRect(-s.xhairDot/2 - s.xhairOutWidth, -s.xhairDot/2 - s.xhairOutWidth, s.xhairDot + s.xhairOutWidth*2, s.xhairDot + s.xhairOutWidth*2, s.xhairOutline);
+            if (s.xhairShape === "cross") {
+                const dbO = (x, y, w, h) => drawRect(x - s.xhairOutWidth, y - s.xhairOutWidth, w + s.xhairOutWidth * 2, h + s.xhairOutWidth * 2, s.xhairOutline);
+                dbO(-s.xhairThick / 2, -s.xhairGap - s.xhairSize, s.xhairThick, s.xhairSize); dbO(-s.xhairThick / 2, s.xhairGap, s.xhairThick, s.xhairSize);
+                dbO(-s.xhairGap - s.xhairSize, -s.xhairThick / 2, s.xhairSize, s.xhairThick); dbO(s.xhairGap, -s.xhairThick / 2, s.xhairSize, s.xhairThick);
+            } else if (s.xhairShape === "plus") {
+                drawRect(-s.xhairThick/2 - s.xhairOutWidth, -s.xhairSize - s.xhairOutWidth, s.xhairThick + s.xhairOutWidth*2, s.xhairSize*2 + s.xhairOutWidth*2, s.xhairOutline);
+                drawRect(-s.xhairSize - s.xhairOutWidth, -s.xhairThick/2 - s.xhairOutWidth, s.xhairSize*2 + s.xhairOutWidth*2, s.xhairThick + s.xhairOutWidth*2, s.xhairOutline);
+            } else if (s.xhairShape === "circle" || s.xhairShape === "hCircle") {
+                ctx.beginPath(); ctx.arc(0, 0, s.xhairSize, 0, Math.PI * 2); ctx.strokeStyle = s.xhairOutline; ctx.lineWidth = s.xhairThick + (s.xhairOutWidth * 2); ctx.stroke();
+            } else if (s.xhairShape === "square" || s.xhairShape === "hSquare") {
+                drawRect(-s.xhairSize - s.xhairOutWidth, -s.xhairSize - s.xhairOutWidth, s.xhairSize*2 + s.xhairOutWidth*2, s.xhairSize*2 + s.xhairOutWidth*2, s.xhairOutline);
+            } else if (s.xhairShape === "symbol") {
+                ctx.font = `${s.xhairSize * 2}px Arial`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.strokeStyle = s.xhairOutline; ctx.lineWidth = s.xhairOutWidth * 2; ctx.strokeText(s.xhairSymbol, 0, 0);
+            }
+        }
+        if (s.xhairDot > 0) drawRect(-s.xhairDot/2, -s.xhairDot/2, s.xhairDot, s.xhairDot, s.xhairColor);
+        if (s.xhairShape === "cross") {
+            const dbM = (x, y, w, h) => drawRect(x, y, w, h, s.xhairColor);
+            dbM(-s.xhairThick / 2, -s.xhairGap - s.xhairSize, s.xhairThick, s.xhairSize); dbM(-s.xhairThick / 2, s.xhairGap, s.xhairThick, s.xhairSize);
+            dbM(-s.xhairGap - s.xhairSize, -s.xhairThick / 2, s.xhairSize, s.xhairThick); dbM(s.xhairGap, -s.xhairThick / 2, s.xhairSize, s.xhairThick);
+        } else if (s.xhairShape === "plus") {
+            drawRect(-s.xhairThick/2, -s.xhairSize, s.xhairThick, s.xhairSize*2, s.xhairColor);
+            drawRect(-s.xhairSize, -s.xhairThick/2, s.xhairSize*2, s.xhairThick, s.xhairColor);
+        } else if (s.xhairShape === "circle") {
+            ctx.beginPath(); ctx.arc(0, 0, s.xhairSize, 0, Math.PI * 2); ctx.fillStyle = s.xhairColor; ctx.fill();
+        } else if (s.xhairShape === "hCircle") {
+            ctx.beginPath(); ctx.arc(0, 0, s.xhairSize, 0, Math.PI * 2); ctx.strokeStyle = s.xhairColor; ctx.lineWidth = s.xhairThick; ctx.stroke();
+        } else if (s.xhairShape === "square") {
+            drawRect(-s.xhairSize, -s.xhairSize, s.xhairSize*2, s.xhairSize*2, s.xhairColor);
+        } else if (s.xhairShape === "hSquare") {
+            ctx.strokeStyle = s.xhairColor; ctx.lineWidth = s.xhairThick; ctx.strokeRect(-s.xhairSize, -s.xhairSize, s.xhairSize*2, s.xhairSize*2);
+        } else if (s.xhairShape === "symbol") {
+            ctx.font = `${s.xhairSize * 2}px Arial`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = s.xhairColor; ctx.fillText(s.xhairSymbol, 0, 0);
+        }
+        ctx.restore();
+    }
+
+    let lastIsIngame = null;
+    let _elsCache = {};
+    const getEl = (id) => _elsCache[id] || (_elsCache[id] = document.getElementById(id));
+
+    function xhairLoop() {
+        const inst = getEl('instructions'), login = getEl('windowHolder'), mainUI = getEl('inGameUI'), upd = getEl('instructionsUpdate');
+        const isIngame = !!document.pointerLockElement || ((!inst || inst.offsetHeight === 0) && (!login || login.offsetHeight === 0) && (mainUI && mainUI.offsetHeight > 0));
+
+        if (upd && upd.offsetHeight > 0) {
+            const now = Date.now();
+            const lastAuto = parseInt(sessionStorage.getItem('lombre_last_match') || "0");
+            if (now - lastAuto > 8000) {
+                sessionStorage.setItem('lombre_last_match', now);
+                fetchMatch();
+            }
+        }
+
+        if (isIngame !== lastIsIngame) {
+            if (mBtn) mBtn.style.display = isIngame ? "none" : "flex";
+            lastIsIngame = isIngame;
+        }
+
+        let canvas = getEl("lombre_xhair_canvas");
+        let hideStyle = getEl("lombre_xhair_hide");
+        if (!hideStyle) { hideStyle = document.createElement("style"); hideStyle.id = "lombre_xhair_hide"; document.head.appendChild(hideStyle); _elsCache["lombre_xhair_hide"] = hideStyle; }
+
+        if (!STATE.xhairEnabled || !isIngame) {
+            if (canvas && canvas.style.display !== "none") canvas.style.display = "none";
+            if (hideStyle.textContent !== "") hideStyle.textContent = "";
+            requestAnimationFrame(xhairLoop); return;
+        }
+
+        if (!canvas) {
+            canvas = document.createElement("canvas"); canvas.id = "lombre_xhair_canvas";
+            canvas.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9999999;";
+            document.body.appendChild(canvas); _elsCache["lombre_xhair_canvas"] = canvas;
+        }
+        if (canvas.style.display !== "block") canvas.style.display = "block";
+        if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        if (hideStyle.textContent === "") hideStyle.textContent = "#crosshair { display: none !important; }";
+
+        const ctx = canvas.getContext("2d"); ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawXhair(ctx, canvas.width / 2, canvas.height / 2, STATE); requestAnimationFrame(xhairLoop);
+    }
+
+    const ui = document.createElement("div"); ui.id = "lombre_ui";
+    ui.style.cssText = `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background: #0a0a0a; border: 1px solid #333; padding: 25px; z-index: 100000000; color: #fff; display: none; font-family: 'GameFont', 'Verdana', sans-serif; width: 560px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);`;
+
+    const mBtn = document.createElement("div"); mBtn.id = "lombre_m_btn"; mBtn.className = "onMenu"; mBtn.textContent = "M";
+    mBtn.style.cssText = `position:fixed; top:20px; right:20px; width:35px; height:35px; background: #0a0a0a; border: 1px solid #333; color: #fff; display: flex; align-items: center; justify-content: center; font-family: 'GameFont', sans-serif; font-weight: 900; font-size: 16px; cursor: pointer; border-radius: 6px; z-index: 10000000; transition: 0.2s; box-shadow: 0 2px 10px rgba(0,0,0,0.5);`;
+    mBtn.onmouseover = () => { mBtn.style.background = "#fff"; mBtn.style.color = "#000"; };
+    mBtn.onmouseout = () => { mBtn.style.background = "#0a0a0a"; mBtn.style.color = "#fff"; };
+    mBtn.onclick = () => toggleUI();
+
+    function render() {
+        const contentArea = ui.querySelector('#scroll_area');
+        if (contentArea) STATE.scrollPos = contentArea.scrollTop;
+        let html = `
+            <div id="close_btn" style="position:absolute; top:15px; right:20px; font-size:20px; color:#444; cursor:pointer; font-weight:900; transition:0.2s;">X</div>
+            <div style="font-size: 18px; font-weight: 900; text-align: center; margin-bottom: 20px; color: #fff; letter-spacing: 3px;">MATCHMAKER</div>
+            <div style="display:flex; gap:8px; margin-bottom:20px;">
+                ${['match', 'raids', 'trade', 'xhair', 'css', 'scripts'].map(t => `<div class="tab-btn" data-t="${t}" style="flex:1; padding:12px; text-align:center; cursor:pointer; background:${STATE.tab===t ? '#fff' : '#1a1a1a'}; color:${STATE.tab===t ? '#000' : '#888'}; border:1px solid ${STATE.tab===t ? '#fff' : '#333'}; border-radius:6px; font-weight:900; font-size:10px; transition:0.2s;">${(t==='xhair' ? 'crosshair' : t).toUpperCase()}</div>`).join('')}
+            </div>
+            <div id="scroll_area" style="max-height:450px; overflow-y:auto; padding-right:8px;">
+        `;
+
+        if (STATE.tab === "xhair") {
+            html += `
+                <div style="display:flex; flex-direction:column; align-items:center; gap:12px;">
+                    <div style="width:80px; height:80px; background:#111; border:1px solid #333; border-radius:8px; display:flex; align-items:center; justify-content:center; position:relative;">
+                        <canvas id="xhair_preview" width="80" height="80"></canvas>
+                        <div style="position:absolute; top:3px; left:5px; font-size:6px; color:#444; font-weight:900;">PRVW</div>
+                    </div>
+                    <div style="width:100%; display:grid; grid-template-columns: 1fr 1fr; gap:10px; background:#111; padding:15px; border-radius:8px; border:1px solid #222;">
+                        <div style="grid-column: span 2; display: flex; gap: 10px; margin-bottom: 5px;">
+                            <div style="flex: 1;">
+                                <div style="font-size:7px; color:#666; font-weight:bold; margin-bottom:2px;">SHAPE</div>
+                                <select id="xhair_shape_sel" style="width:100%; background:#1a1a1a; color:#fff; border:1px solid #333; font-size:10px; padding:5px; border-radius:4px; outline:none;">
+                                    <option value="cross" ${STATE.xhairShape==='cross'?'selected':''}>CROSS</option>
+                                    <option value="plus" ${STATE.xhairShape==='plus'?'selected':''}>PLUS</option>
+                                    <option value="circle" ${STATE.xhairShape==='circle'?'selected':''}>CIRCLE</option>
+                                    <option value="hCircle" ${STATE.xhairShape==='hCircle'?'selected':''}>HOLLOW CIRCLE</option>
+                                    <option value="square" ${STATE.xhairShape==='square'?'selected':''}>SQUARE</option>
+                                    <option value="hSquare" ${STATE.xhairShape==='hSquare'?'selected':''}>HOLLOW SQUARE</option>
+                                    <option value="symbol" ${STATE.xhairShape==='symbol'?'selected':''}>SYMBOL</option>
+                                </select>
+                            </div>
+                            <div style="flex: 1; display: ${STATE.xhairShape === 'symbol' ? 'block' : 'none'};">
+                                <div style="font-size:7px; color:#666; font-weight:bold; margin-bottom:2px;">INPUT TEXT</div>
+                                <input type="text" id="xhair_sym_input" maxlength="4" value="${STATE.xhairSymbol}" placeholder="★" style="width:100%; background:#1a1a1a; color:#fff; border:1px solid #333; font-size:10px; padding:5px; border-radius:4px; text-align:center; outline:none;">
+                            </div>
+                        </div>
+                        ${[{l:'SIZE',k:'xhairSize',n:0,x:50},{l:'THICK',k:'xhairThick',n:1,x:20},{l:'GAP',k:'xhairGap',n:-10,x:50},{l:'DOT',k:'xhairDot',n:0,x:20},{l:'OUTLINE',k:'xhairOutWidth',n:0,x:5}].map(s => `
+                            <div><div style="display:flex; justify-content:space-between; font-size:7px; color:#666; font-weight:bold; margin-bottom:2px;"><span>${s.l}</span><span class="v-label">${STATE[s.k]}</span></div><input type="range" class="xh-input" data-k="${s.k}" min="${s.n}" max="${s.x}" value="${STATE[s.k]}" style="width:100%; accent-color:#fff; height:3px; cursor:pointer;"></div>
+                        `).join('')}
+                        <div style="display:flex; gap:8px; align-items:center; grid-column: span 2; margin-bottom:5px;">
+                            <div style="flex:1;"><div style="font-size:7px; color:#666; font-weight:bold; margin-bottom:2px;">COLOR</div><input type="color" class="xh-input" data-k="xhairColor" value="${STATE.xhairColor}" style="width:100%; height:20px; background:none; border:1px solid #333; cursor:pointer; padding:0;"></div>
+                            <div style="flex:1;"><div style="font-size:7px; color:#666; font-weight:bold; margin-bottom:2px;">OUTLINE</div><input type="color" class="xh-input" data-k="xhairOutline" value="${STATE.xhairOutline}" style="width:100%; height:20px; background:none; border:1px solid #333; cursor:pointer; padding:0;"></div>
+                        </div>
+                        <div style="grid-column: span 2; border-top:1px solid #222; padding-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                            <div style="display:flex; align-items:center; gap:8px; grid-column: span 2;">
+                                <button id="toggle_stretch" style="flex:none; padding:6px 12px; background:${STATE.xhairStretch?'#fff':'#1a1a1a'}; color:${STATE.xhairStretch?'#000':'#fff'}; border:1px solid #333; border-radius:4px; font-weight:900; font-size:9px; cursor:pointer;">STRETCH: ${STATE.xhairStretch?'ON':'OFF'}</button>
+                                <div style="flex:1; opacity:${STATE.xhairStretch?1:0.3};"><div style="display:flex; justify-content:space-between; font-size:7px; color:#555;"><span>WIDTH</span><span class="v-label">${STATE.xhairXScale.toFixed(1)}</span></div><input type="range" class="xh-input" data-k="xhairXScale" min="0.1" max="3" step="0.1" value="${STATE.xhairXScale}" ${!STATE.xhairStretch?'disabled':''} style="width:100%; height:2px;"></div>
+                                <div style="flex:1; opacity:${STATE.xhairStretch?1:0.3};"><div style="display:flex; justify-content:space-between; font-size:7px; color:#555;"><span>HEIGHT</span><span class="v-label">${STATE.xhairYScale.toFixed(1)}</span></div><input type="range" class="xh-input" data-k="xhairYScale" min="0.1" max="3" step="0.1" value="${STATE.xhairYScale}" ${!STATE.xhairStretch?'disabled':''} style="width:100%; height:2px;"></div>
+                            </div>
+                        </div>
+                        <button id="toggle_xhair" style="grid-column: span 2; padding:12px; background:${STATE.xhairEnabled?'#fff':'#1a1a1a'}; color:${STATE.xhairEnabled?'#000':'#fff'}; border:1px solid #333; border-radius:6px; font-weight:900; font-size:10px; cursor:pointer;">${STATE.xhairEnabled ? 'CROSSHAIR: ON' : 'CROSSHAIR: OFF'}</button>
+                    </div>
+                </div>
+            `;
+        } else if (STATE.tab === "match") {
+            const drawGrid = (title, items, key, cols=4) => {
+                html += `<div style="font-size:10px; color:#666; margin:15px 0 8px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;">${title}</div><div style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:6px;">`;
+                for (let id in items) {
+                    let v = isNaN(id) ? id : parseInt(id); let act = STATE[key].includes(v);
+                    html += `<div class="m-select" data-key="${key}" data-val="${v}" style="padding:10px 2px; cursor:pointer; background:${act ? '#fff' : '#151515'}; color:${act ? '#000' : '#666'}; border: 1px solid ${act ? '#fff' : '#222'}; border-radius:4px; font-size:9px; font-weight:bold; text-align:center; transition:0.1s; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${items[id]}</div>`;
+                }
+                html += `</div>`;
+            };
+            drawGrid("MAPS", MAPS_MAP, "maps", 4); drawGrid("GAMEMODES", MODES_MAP, "modes", 3); drawGrid("SERVERS", REG_LBL, "regions", 5);
+            html += `
+                <div style="background:#111; padding:20px; border-radius:8px; margin-top:25px; border:1px solid #222;">
+                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:12px; font-weight:900; color:#888;">
+                        <span>MAX - <span id="l_maxPlayers">${STATE.maxPlayers}</span></span>
+                        <span>MIN - <span id="l_minPlayers">${STATE.minPlayers}</span></span>
+                        <span>MIN TIME - <span id="l_minTime">${STATE.minTime}</span>s</span>
+                    </div>
+                    <input type="range" class="s-input" data-k="maxPlayers" min="0" max="8" value="${STATE.maxPlayers}" style="width:100%; margin-bottom:12px; accent-color:#fff;">
+                    <input type="range" class="s-input" data-k="minPlayers" min="0" max="8" value="${STATE.minPlayers}" style="width:100%; margin-bottom:12px; accent-color:#fff;">
+                    <input type="range" class="s-input" data-k="minTime" min="1" max="240" step="1" value="${STATE.minTime}" style="width:100%; accent-color:#fff;">
+                </div>
+                <button id="find_btn" style="width:100%; padding:18px; margin-top:20px; background:#fff; color:#000; border:none; border-radius:6px; font-weight:900; font-size:15px; cursor:pointer; transition:0.2s; font-family:'GameFont';">FIND GAME</button>
+                <div style="display:flex; justify-content:center; margin-top:12px;"><button id="kb_btn" style="padding:6px 15px; background:transparent; color:#444; border:1px solid #222; border-radius:4px; font-weight:900; font-size:9px; cursor:pointer;">KEYBIND: ${STATE.keybind ? STATE.keybind.replace('Key','').toUpperCase() : 'NONE'}</button></div>
+            `;
+        } else if (STATE.tab === "raids") {
+            html += `<div style="display:flex; background:#111; border:1px solid #222; border-radius:6px; padding:4px; margin-bottom:15px;"><div class="rs-btn" data-s="asc" style="flex:1; padding:10px; text-align:center; font-size:9px; font-weight:900; cursor:pointer; border-radius:4px; background:${STATE.raidSort==='asc' ? '#fff' : 'transparent'}; color:${STATE.raidSort==='asc' ? '#000' : '#555'};">LEAST PLAYERS</div><div class="rs-btn" data-s="desc" style="flex:1; padding:10px; text-align:center; font-size:9px; font-weight:900; cursor:pointer; border-radius:4px; background:${STATE.raidSort==='desc' ? '#fff' : 'transparent'}; color:${STATE.raidSort==='desc' ? '#000' : '#555'};">MOST PLAYERS</div></div><div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; padding-bottom:30px;">`;
+            for (let r in RAIDS) html += `<button class="raid-btn" data-m="${RAIDS[r]}" style="padding:40px 10px; background:#111; color:#fff; border:1px solid #333; border-radius:8px; font-weight:900; cursor:pointer; transition:0.2s; font-size:14px; font-family:'GameFont';">${r.toUpperCase()}</button>`;
+            html += `</div>`;
+        } else if (STATE.tab === "trade") {
+            html += `<div style="text-align:center; padding:100px 0;"><button id="trade_btn" style="padding:25px 50px; background:#fff; color:#000; border:none; border-radius:8px; font-weight:900; font-size:20px; cursor:pointer; font-family:'GameFont';">JOIN TRADE PLAZA</button><div style="margin-top:20px; font-size:11px; color:#555; text-transform:uppercase;">${STATE.tradeData || 'LOADING INFO...'}</div></div>`;
+        } else if (STATE.tab === "css") {
+            html += `<div style="text-align:center; padding:60px 0;"><button id="load_css_btn" style="padding:25px 50px; background:#fff; color:#000; border:none; border-radius:8px; font-weight:900; font-size:18px; cursor:pointer; font-family:'GameFont';">SELECT CSS FILE</button>${STATE.css?`<div style="margin-top:20px;"><button id="clear_css_btn" style="background:transparent; color:#ff4444; border:none; cursor:pointer; font-size:10px; font-weight:bold; text-decoration:underline;">CLEAR SAVED CSS</button></div>`:''}<div style="margin-top:40px; font-size:9px; color:#444;">Status: ${STATE.css?'Active':'Not Loaded'}</div></div>`;
+        } else if (STATE.tab === "scripts") {
+            html += `<div style="text-align:center; padding:60px 0;"><button id="load_script_btn" style="padding:25px 50px; background:#fff; color:#000; border:none; border-radius:8px; font-weight:900; font-size:18px; cursor:pointer; font-family:'GameFont';">SELECT JS FILE</button><div style="margin-top:40px; font-size:9px; color:#444;">Status: ${STATE.script?'Active':'Not Loaded'}</div></div>`;
+        }
+
+        html += `</div>`; ui.innerHTML = html;
+        const nA = ui.querySelector('#scroll_area'); if (nA) nA.scrollTop = STATE.scrollPos;
+        ui.querySelector("#close_btn").onclick = () => toggleUI(false);
+        const prv = ui.querySelector('#xhair_preview'); if (prv) drawXhair(prv.getContext('2d'), 40, 40, STATE);
+
+        ui.querySelectorAll(".tab-btn").forEach(b => b.onclick = () => { STATE.tab = b.dataset.t; if(STATE.tab==='trade') fetchTradeInfo(); render(); });
+        ui.querySelectorAll(".m-select").forEach(b => b.onclick = () => {
+            let k = b.dataset.key, v = isNaN(b.dataset.val) ? b.dataset.val : parseInt(b.dataset.val);
+            STATE[k] = STATE[k].includes(v) ? STATE[k].filter(x => x !== v) : [...STATE[k], v]; saveState(); render();
+        });
+
+        ui.querySelectorAll(".xh-input").forEach(i => {
+            i.oninput = (e) => {
+                const val = isNaN(e.target.value) ? e.target.value : parseFloat(e.target.value);
+                STATE[i.dataset.k] = val;
+                const label = i.previousElementSibling.lastElementChild;
+                if (label && label.classList.contains('v-label')) label.textContent = val.toFixed(val < 5 && val % 1 !== 0 ? 1 : 0);
+                const p = ui.querySelector('#xhair_preview'); if (p) { let ctx = p.getContext('2d'); ctx.clearRect(0,0,80,80); drawXhair(ctx, 40, 40, STATE); }
+            };
+            i.onchange = saveState;
+        });
+
+        ui.querySelectorAll(".s-input").forEach(i => {
+            i.oninput = (e) => {
+                const val = parseInt(e.target.value);
+                STATE[i.dataset.k] = val;
+                const label = ui.querySelector(`#l_${i.dataset.k}`);
+                if (label) label.textContent = val;
+            };
+            i.onchange = saveState;
+        });
+
+        if (ui.querySelector("#xhair_shape_sel")) ui.querySelector("#xhair_shape_sel").onchange = (e) => { STATE.xhairShape = e.target.value; saveState(); render(); };
+        if (ui.querySelector("#xhair_sym_input")) ui.querySelector("#xhair_sym_input").oninput = (e) => { STATE.xhairSymbol = e.target.value; saveState(); const p = ui.querySelector('#xhair_preview'); if (p) { let ctx = p.getContext('2d'); ctx.clearRect(0,0,80,80); drawXhair(ctx, 40, 40, STATE); } };
+        ui.querySelectorAll(".rs-btn").forEach(b => b.onclick = () => { STATE.raidSort = b.dataset.s; saveState(); render(); });
+        ui.querySelectorAll(".raid-btn").forEach(b => b.onclick = () => searchRaid(b.dataset.m));
+        if (ui.querySelector("#toggle_xhair")) ui.querySelector("#toggle_xhair").onclick = () => { STATE.xhairEnabled = !STATE.xhairEnabled; saveState(); render(); };
+        if (ui.querySelector("#toggle_stretch")) ui.querySelector("#toggle_stretch").onclick = () => { STATE.xhairStretch = !STATE.xhairStretch; saveState(); render(); };
+        if (ui.querySelector("#find_btn")) ui.querySelector("#find_btn").onclick = fetchMatch;
+        if (ui.querySelector("#trade_btn")) ui.querySelector("#trade_btn").onclick = findTrade;
+        if (ui.querySelector("#load_css_btn")) ui.querySelector("#load_css_btn").onclick = loadCSSFile;
+        if (ui.querySelector("#load_script_btn")) ui.querySelector("#load_script_btn").onclick = loadScriptFile;
+        if (ui.querySelector("#clear_css_btn")) ui.querySelector("#clear_css_btn").onclick = () => { STATE.css = ""; saveState(); applyCSS(""); render(); };
+        if (ui.querySelector("#kb_btn")) ui.querySelector("#kb_btn").onclick = () => { STATE.binding = true; ui.querySelector("#kb_btn").textContent = "WAITING..."; };
+    }
+
+    function loadCSSFile() { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".css"; inp.onchange = e => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = r => { STATE.css = r.target.result; saveState(); applyCSS(STATE.css); render(); }; reader.readAsText(file); }; inp.click(); }
+    function loadScriptFile() { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".js"; inp.onchange = e => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = r => { STATE.script = r.target.result; saveState(); applyScript(STATE.script); render(); }; reader.readAsText(file); }; inp.click(); }
+    async function findTrade() { showLoader(); try { const res = await fetch("https://matchmaker.krunker.io/game-list?hostname=krunker.io"); const data = await res.json(); const plazas = data.games.filter(g => (g[4]?.i || "").toLowerCase().includes("plaza")).sort((a,b) => b[2] - a[2]); if (plazas.length > 0) window.location.assign(`https://krunker.io/?game=${plazas[0][0]}`); } catch (e) { } }
+    async function searchRaid(k) { showLoader(); try { const res = await fetch("https://matchmaker.krunker.io/game-list?hostname=krunker.io"); const data = await res.json(); const raids = data.games.filter(g => (g[4]?.i || "").toLowerCase().includes(k.toLowerCase()) && g[2] < g[3]).sort((a,b) => STATE.raidSort === "asc" ? a[2] - b[2] : b[2] - a[2]); if (raids.length > 0) window.location.assign(`https://krunker.io/?game=${raids[0][0]}`); } catch (e) { } }
+    async function fetchMatch() { showLoader(); try { const listRes = await fetch("https://matchmaker.krunker.io/game-list?hostname=krunker.io"); const data = await listRes.json(); const history = JSON.parse(localStorage.getItem("lombre_history") || "[]"); let matches = data.games.filter(g => { const [id, reg, players, max, details, time] = g; return details?.c === 0 && STATE.regions.includes(reg) && STATE.maps.includes((details?.i || "").toLowerCase()) && STATE.modes.includes(details?.g) && players >= STATE.minPlayers && players <= STATE.maxPlayers && players < max && time >= STATE.minTime; }).sort((a, b) => b[2] - a[2]); const selected = matches.find(m => !history.includes(m[0])) || matches[0]; if (selected) { history.push(selected[0]); if (history.length > 20) history.shift(); localStorage.setItem("lombre_history", JSON.stringify(history)); window.location.assign(`https://krunker.io/?game=${selected[0]}`); } } catch (e) { } }
+
+    window.addEventListener("mousedown", (e) => { if (STATE.visible && !ui.contains(e.target) && !mBtn.contains(e.target)) toggleUI(false); });
+    window.addEventListener("keydown", (e) => {
+        if (STATE.binding) { e.preventDefault(); STATE.keybind = e.code; STATE.binding = false; saveState(); render(); return; }
+        if (e.key === "F2") { e.preventDefault(); toggleUI(); }
+        if (STATE.keybind && e.code === STATE.keybind) { if (document.activeElement.tagName !== "INPUT") { e.preventDefault(); fetchMatch(); } }
+    });
+
+    const init = () => { if (document.body) { document.body.appendChild(ui); document.body.appendChild(mBtn); if (STATE.css) applyCSS(STATE.css); if (STATE.script) applyScript(STATE.script); xhairLoop(); } else { setTimeout(init, 500); } };
+    init();
+})();
