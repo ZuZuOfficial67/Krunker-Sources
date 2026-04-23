@@ -1,0 +1,119 @@
+// ==UserScript==
+// @name         CUSTOM SKY
+// @version      1.12
+// @description  custom map properties swapper
+// @author       notJustKaZu
+// @match        https://krunker.io/*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=krunker.io
+// @run-at       document-start
+// @grant        unsafeWindow
+// ==/UserScript==
+const log = console.log
+var i = null;
+if (typeof unsafeWindow !== 'undefined') {
+    log("unsafeWindow");
+    i = unsafeWindow;
+} else {
+    log("window");
+    i = window;
+}
+const global = (() => { return i })()
+
+const origFetch = global.fetch
+const origDigest = global.crypto.subtle.digest.bind(global.crypto.subtle)
+global.curMap = null;
+let lastMapDigest = null
+
+
+
+let lighting = {
+    "ambientI": 0.5,
+    "lightI": 0,
+    "sky": "rgb(0, 0, 0)",
+}
+let defaultSettings = {
+    "skyDome": false,
+    "shadowD": 0,
+    "ambient": 13363199,
+    "light": 5723991,
+    "lightD": 310,
+    "correctLights": false,
+    "toneMappingExposure": 0,
+    "outputEncoding": "0",
+
+}
+
+Object.defineProperty(global.crypto.subtle, "digest", {
+    get: () => {
+        return (...args) => {
+            try {
+                if (args[1]) {
+                    let a = new TextDecoder;
+                    let b = a.decode(args[1]);
+                    let c = JSON.parse(b);
+                    if (c && c?.name && c?.objects) {
+                        return lastMapDigest
+                    } else {
+                        throw "x"
+                    }
+                } else {
+                    throw "x"
+                }
+            } catch {
+                return origDigest(...args)
+            }
+        }
+    }
+})
+
+global.fetch = (...args) => {
+    if (args && typeof args[0] === "string") {
+        if (args[0].includes("/report/error")) { return }
+        const req = args[0]
+        if (req.includes("io/maps/")) {
+            log('map grabbed (window.curMap)');
+            return customFetch(...args);
+        }
+    }
+    return origFetch(...args)
+}
+
+/*
+res = res.data;
+lastMapDigest = await origDigest("SHA-256", new TextEncoder().encode(res))
+const overrides = {...defaultSettings, ...lighting}
+Object.assign(res, overrides)
+*/
+
+
+async function customFetch(...args) {
+    const response = await origFetch(...args);
+
+    const transformer = new TransformStream({
+        async transform(chunk, controller) {
+            log(chunk, controller);
+            const text = new TextDecoder().decode(chunk);
+
+            const modified = text;
+            let modObj = JSON.parse(modified).data;
+            global.curMap = modObj;
+            let origData = JSON.stringify(modObj);
+            lastMapDigest = await origDigest("SHA-256", new TextEncoder().encode(origData));
+
+            const overrides = {...defaultSettings, ...lighting};
+            Object.assign(modObj, overrides);
+
+            let wrapperObj = JSON.stringify({data:modObj});
+
+            controller.enqueue(
+                new TextEncoder().encode(wrapperObj)
+            );
+        }
+    });
+
+    return new Response(
+        response.body.pipeThrough(transformer),
+        response
+    );
+
+}
