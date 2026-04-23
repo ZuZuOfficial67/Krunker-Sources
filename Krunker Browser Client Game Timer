@@ -1,0 +1,40 @@
+// ==UserScript==
+// @name         Krunker Browser Client Game Timer
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Game timer in the menu
+// @author       notJustKaZu
+// @match        https://krunker.io/
+// @grant        none
+// ==/UserScript==
+(function() {
+    'use strict';
+
+    // Menu Timer
+    setInterval(() => {
+        const instructions = document.getElementById('instructions');
+        if (!instructions) return;
+
+        // Buat atau ambil elemen menuTimer
+        let menuTimer = document.getElementById('menuTimer');
+        if (!menuTimer) {
+            menuTimer = document.createElement("div");
+            menuTimer.setAttribute('id', 'menuTimer');
+            menuTimer.setAttribute('style', "color: #0af; margin-top: 10px; font-size: 1.2em;");
+            instructions.appendChild(menuTimer);
+        }
+
+        // Update isi timer
+        const timerVal = document.getElementById('timerVal');
+        if (timerVal) {
+            menuTimer.innerHTML = timerVal.innerHTML;
+        }
+    }, 1000);
+
+    // Find New Game on F4
+    document.onkeydown = findNewGame;
+    function findNewGame(a) {
+        if (a.code !== 'F4') return;
+        window.location.href = 'https://krunker.io';
+    }
+})();
