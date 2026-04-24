@@ -1,36 +1,34 @@
 // ==UserScript==
 // @name         CUSTOM SKY
-// @version      1.12
-// @description  custom map properties swapper
+// @version      2.0
+// @description  custom map properties swapper (optimized)
 // @author       notJustKaZu
 // @match        https://krunker.io/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=krunker.io
 // @run-at       document-start
 // @grant        unsafeWindow
 // ==/UserScript==
-const log = console.log
-var i = null;
-if (typeof unsafeWindow !== 'undefined') {
-    log("unsafeWindow");
-    i = unsafeWindow;
-} else {
-    log("window");
-    i = window;
-}
-const global = (() => { return i })()
 
-const origFetch = global.fetch
-const origDigest = global.crypto.subtle.digest.bind(global.crypto.subtle)
+const log = console.log;
+const i = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+const global = i;
+
+const origFetch = global.fetch;
+const origDigest = global.crypto.subtle.digest.bind(global.crypto.subtle);
+
+// ✅ FIX 1: Singleton decoder — jangan bikin TextDecoder baru tiap panggilan digest
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
 global.curMap = null;
-let lastMapDigest = null
-
-
+let lastMapDigest = null;
 
 let lighting = {
     "ambientI": 0.5,
     "lightI": 0,
     "sky": "rgb(0, 0, 0)",
-}
+};
+
 let defaultSettings = {
     "skyDome": false,
     "shadowD": 0,
@@ -40,74 +38,88 @@ let defaultSettings = {
     "correctLights": false,
     "toneMappingExposure": 0,
     "outputEncoding": "0",
+};
 
-}
+// ✅ FIX 2: Cache overrides — jangan spread tiap kali customFetch jalan
+const overrides = { ...defaultSettings, ...lighting };
 
 Object.defineProperty(global.crypto.subtle, "digest", {
     get: () => {
         return (...args) => {
+            // ✅ FIX 3: Early exit — skip proses berat kalau data kosong atau kecil banget
+            const buf = args[1];
+            if (!buf || buf.byteLength < 30) {
+                return origDigest(...args);
+            }
+
+            // ✅ FIX 4: Cek byte pertama langsung (0x7B = '{') sebelum decode penuh
+            const firstByte = new Uint8Array(buf)[0];
+            if (firstByte !== 0x7B) {
+                return origDigest(...args);
+            }
+
+            // ✅ FIX 5: Cek lastMapDigest tersedia sebelum decode & parse
+            if (!lastMapDigest) {
+                return origDigest(...args);
+            }
+
             try {
-                if (args[1]) {
-                    let a = new TextDecoder;
-                    let b = a.decode(args[1]);
-                    let c = JSON.parse(b);
-                    if (c && c?.name && c?.objects) {
-                        return lastMapDigest
-                    } else {
-                        throw "x"
-                    }
-                } else {
-                    throw "x"
+                const text = decoder.decode(buf);
+                // ✅ FIX 6: Cek string punya "name" dan "objects" dulu sebelum JSON.parse penuh
+                if (!text.includes('"name"') || !text.includes('"objects"')) {
+                    return origDigest(...args);
+                }
+                const obj = JSON.parse(text);
+                if (obj?.name && obj?.objects) {
+                    return lastMapDigest;
                 }
             } catch {
-                return origDigest(...args)
+                // silent — bukan map data
             }
-        }
+
+            return origDigest(...args);
+        };
     }
-})
+});
 
 global.fetch = (...args) => {
     if (args && typeof args[0] === "string") {
-        if (args[0].includes("/report/error")) { return }
-        const req = args[0]
-        if (req.includes("io/maps/")) {
+        if (args[0].includes("/report/error")) return;
+        if (args[0].includes("io/maps/")) {
             log('map grabbed (window.curMap)');
             return customFetch(...args);
         }
     }
-    return origFetch(...args)
-}
-
-/*
-res = res.data;
-lastMapDigest = await origDigest("SHA-256", new TextEncoder().encode(res))
-const overrides = {...defaultSettings, ...lighting}
-Object.assign(res, overrides)
-*/
-
+    return origFetch(...args);
+};
 
 async function customFetch(...args) {
     const response = await origFetch(...args);
 
     const transformer = new TransformStream({
         async transform(chunk, controller) {
-            log(chunk, controller);
-            const text = new TextDecoder().decode(chunk);
+            try {
+                const text = decoder.decode(chunk);
+                const parsed = JSON.parse(text);
+                const modObj = parsed.data;
 
-            const modified = text;
-            let modObj = JSON.parse(modified).data;
-            global.curMap = modObj;
-            let origData = JSON.stringify(modObj);
-            lastMapDigest = await origDigest("SHA-256", new TextEncoder().encode(origData));
+                global.curMap = modObj;
 
-            const overrides = {...defaultSettings, ...lighting};
-            Object.assign(modObj, overrides);
+                // ✅ FIX 7: Hitung digest dari data ASLI sebelum di-modify
+                const origData = JSON.stringify(modObj);
+                lastMapDigest = await origDigest("SHA-256", encoder.encode(origData));
 
-            let wrapperObj = JSON.stringify({data:modObj});
+                // ✅ FIX 8: Pakai cached overrides, bukan spread tiap kali
+                Object.assign(modObj, overrides);
 
-            controller.enqueue(
-                new TextEncoder().encode(wrapperObj)
-            );
+                controller.enqueue(
+                    encoder.encode(JSON.stringify({ data: modObj }))
+                );
+            } catch (err) {
+                log("customFetch transform error:", err);
+                // ✅ FIX 9: Fallback — kalau gagal, pass chunk asli biar game ga crash
+                controller.enqueue(chunk);
+            }
         }
     });
 
@@ -115,5 +127,4 @@ async function customFetch(...args) {
         response.body.pipeThrough(transformer),
         response
     );
-
 }
